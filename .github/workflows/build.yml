@@ -55,16 +55,45 @@ jobs:
 
       - name: Patch csproj
         run: |
-          $refPath = $env:RECLASS_REF_PATH -replace '\\', '\\'
-          $replacement = "<Reference Include=`"ReClass.NET`"><HintPath>$refPath\\ReClass.NET.exe</HintPath><Private>False</Private></Reference>"
-          $content = Get-Content "ReClassMCP.Plugin\ReClassMCP.Plugin.csproj" -Raw
-          $content = $content -replace '(?s)<ProjectReference Include="[^"]*ReClass\.NET\.csproj"[^>]*>.*?</ProjectReference>', $replacement
-          Set-Content "ReClassMCP.Plugin\ReClassMCP.Plugin.csproj" -Value $content
-          Write-Host "Patched csproj to reference: $env:RECLASS_REF_PATH\ReClass.NET.exe"
+          $refPath = $env:RECLASS_REF_PATH
+          Write-Host "ReClass.NET reference path: $refPath"
+          Write-Host "Files in reference path:"
+          Get-ChildItem $refPath | ForEach-Object { Write-Host "  $_" }
+
+          # Read the csproj
+          $csprojPath = "ReClassMCP.Plugin\ReClassMCP.Plugin.csproj"
+          [xml]$xml = Get-Content $csprojPath
+          $nsUri = "http://schemas.microsoft.com/developer/msbuild/2003"
+          $nsMgr = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+          $nsMgr.AddNamespace("ms", $nsUri)
+
+          # Find and remove ProjectReference
+          $projRef = $xml.SelectSingleNode("//ms:ProjectReference[contains(@Include, 'ReClass.NET.csproj')]", $nsMgr)
+          if ($projRef) {
+            $projRef.ParentNode.RemoveChild($projRef) | Out-Null
+            Write-Host "Removed ProjectReference"
+          }
+
+          # Find the ItemGroup with References and add our reference
+          $refItemGroup = $xml.SelectSingleNode("//ms:ItemGroup[ms:Reference]", $nsMgr)
+          $newRef = $xml.CreateElement("Reference", $nsUri)
+          $newRef.SetAttribute("Include", "ReClass.NET")
+          $hintPath = $xml.CreateElement("HintPath", $nsUri)
+          $hintPath.InnerText = "$refPath\ReClass.NET.exe"
+          $private = $xml.CreateElement("Private", $nsUri)
+          $private.InnerText = "False"
+          $newRef.AppendChild($hintPath) | Out-Null
+          $newRef.AppendChild($private) | Out-Null
+          $refItemGroup.AppendChild($newRef) | Out-Null
+
+          $xml.Save((Resolve-Path $csprojPath).Path)
+          Write-Host "Patched csproj saved"
+          Write-Host "Reference added: $refPath\ReClass.NET.exe"
+          Get-Content $csprojPath | Select-String -Pattern "ReClass" | ForEach-Object { Write-Host $_ }
 
       - name: Build Plugin
         run: |
-          msbuild ReClassMCP.Plugin\ReClassMCP.Plugin.csproj /p:Configuration=Release /p:Platform=${{ matrix.platform }} /t:Build /v:minimal
+          msbuild ReClassMCP.Plugin\ReClassMCP.Plugin.csproj /p:Configuration=Release /p:Platform=${{ matrix.platform }} /t:Build /v:normal
 
       - name: Prepare artifacts
         run: |
