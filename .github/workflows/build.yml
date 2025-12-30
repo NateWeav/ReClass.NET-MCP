@@ -17,6 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Clone ReClass.NET
+        run: git clone --depth 1 https://github.com/ReClassNET/ReClass.NET.git ReClass.NET
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
@@ -24,61 +27,17 @@ jobs:
         uses: nuget/setup-nuget@v2
 
       - name: Restore NuGet packages
-        run: nuget restore ReClassMCP.Plugin\packages.config -PackagesDirectory packages
-
-      - name: Download ReClass.NET and Build Plugin
         run: |
-          # Download ReClass.NET release
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ReClassNET/ReClass.NET/releases/latest"
-          $asset = $release.assets | Where-Object { $_.name -like "*.rar" } | Select-Object -First 1
-          if (-not $asset) { $asset = $release.assets | Select-Object -First 1 }
-          Write-Host "Downloading $($asset.name)..."
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "reclass.rar"
-          7z x reclass.rar -oReClass.NET-bin -y
+          nuget restore ReClass.NET\ReClass.NET\ReClass.NET.csproj -PackagesDirectory packages
+          nuget restore ReClassMCP.Plugin\packages.config -PackagesDirectory packages
 
-          # Find platform-specific ReClass.NET.exe
-          $platform = "${{ matrix.platform }}"
-          $reclassExe = Get-ChildItem -Path "ReClass.NET-bin" -Recurse -Filter "ReClass.NET.exe" |
-            Where-Object { $_.DirectoryName -like "*$platform*" } | Select-Object -First 1
-          if (-not $reclassExe) {
-            $reclassExe = Get-ChildItem -Path "ReClass.NET-bin" -Recurse -Filter "ReClass.NET.exe" | Select-Object -First 1
-          }
-          $refPath = $reclassExe.FullName
-          Write-Host "ReClass.NET.exe path: $refPath"
-          Write-Host "Files in folder:"
-          Get-ChildItem $reclassExe.DirectoryName | ForEach-Object { Write-Host "  $_" }
+      - name: Build ReClass.NET
+        run: |
+          msbuild ReClass.NET\ReClass.NET\ReClass.NET.csproj /p:Configuration=Release /p:Platform=${{ matrix.platform }} /t:Build /v:minimal /restore
 
-          # Patch csproj to reference downloaded ReClass.NET.exe
-          $csprojPath = "ReClassMCP.Plugin\ReClassMCP.Plugin.csproj"
-          [xml]$xml = Get-Content $csprojPath
-          $nsUri = "http://schemas.microsoft.com/developer/msbuild/2003"
-          $nsMgr = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
-          $nsMgr.AddNamespace("ms", $nsUri)
-
-          # Remove ProjectReference
-          $projRef = $xml.SelectSingleNode("//ms:ProjectReference[contains(@Include, 'ReClass.NET.csproj')]", $nsMgr)
-          if ($projRef) {
-            $projRef.ParentNode.RemoveChild($projRef) | Out-Null
-            Write-Host "Removed ProjectReference"
-          }
-
-          # Add Reference
-          $refItemGroup = $xml.SelectSingleNode("//ms:ItemGroup[ms:Reference]", $nsMgr)
-          $newRef = $xml.CreateElement("Reference", $nsUri)
-          $newRef.SetAttribute("Include", "ReClass.NET")
-          $hintPath = $xml.CreateElement("HintPath", $nsUri)
-          $hintPath.InnerText = $refPath
-          $private = $xml.CreateElement("Private", $nsUri)
-          $private.InnerText = "False"
-          $newRef.AppendChild($hintPath) | Out-Null
-          $newRef.AppendChild($private) | Out-Null
-          $refItemGroup.AppendChild($newRef) | Out-Null
-
-          $xml.Save((Resolve-Path $csprojPath).Path)
-          Write-Host "Patched csproj. HintPath: $refPath"
-
-          # Build
-          msbuild ReClassMCP.Plugin\ReClassMCP.Plugin.csproj /p:Configuration=Release /p:Platform=$platform /t:Build /v:minimal
+      - name: Build Plugin
+        run: |
+          msbuild ReClassMCP.Plugin\ReClassMCP.Plugin.csproj /p:Configuration=Release /p:Platform=${{ matrix.platform }} /t:Build /v:minimal
 
       - name: Prepare artifacts
         run: |
