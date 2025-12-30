@@ -12,14 +12,27 @@ jobs:
     strategy:
       matrix:
         platform: [x64, x86]
-        configuration: [Release]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Clone ReClass.NET
-        run: git clone --depth 1 https://github.com/ReClassNET/ReClass.NET.git ReClass.NET
+      - name: Download ReClass.NET Release
+        run: |
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ReClassNET/ReClass.NET/releases/latest"
+          $asset = $release.assets | Where-Object { $_.name -like "*${{ matrix.platform }}*" -and $_.name -like "*.zip" } | Select-Object -First 1
+          if (-not $asset) {
+            $asset = $release.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1
+          }
+          Write-Host "Downloading $($asset.name)..."
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "reclass.zip"
+          Expand-Archive -Path "reclass.zip" -DestinationPath "ReClass.NET-bin"
+
+          # Find ReClass.NET.exe location and set up reference path
+          $reclassExe = Get-ChildItem -Path "ReClass.NET-bin" -Recurse -Filter "ReClass.NET.exe" | Select-Object -First 1
+          $refPath = $reclassExe.DirectoryName
+          Write-Host "Reference path: $refPath"
+          echo "RECLASS_REF_PATH=$refPath" >> $env:GITHUB_ENV
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -30,85 +43,85 @@ jobs:
       - name: Restore NuGet packages
         run: nuget restore ReClassMCP.Plugin\packages.config -PackagesDirectory packages
 
-      - name: Build NativeCore
-        run: |
-          msbuild ReClass.NET\NativeCore\Windows\NativeCore.vcxproj `
-            /p:Configuration=${{ matrix.configuration }} `
-            /p:Platform=${{ matrix.platform }} `
-            /p:PlatformToolset=v143 `
-            /t:Build `
-            /v:minimal
-
-      - name: Build ReClass.NET
-        run: |
-          msbuild ReClass.NET\ReClass.NET\ReClass.NET.csproj `
-            /p:Configuration=${{ matrix.configuration }} `
-            /p:Platform=${{ matrix.platform }} `
-            /t:Build `
-            /v:minimal `
-            /restore
-
-      - name: Copy NativeCore to output
-        run: |
-          $src = "ReClass.NET\NativeCore\Windows\bin\${{ matrix.configuration }}\${{ matrix.platform }}\NativeCore.dll"
-          $dst = "ReClass.NET\ReClass.NET\bin\${{ matrix.configuration }}\${{ matrix.platform }}\"
-          if (Test-Path $src) {
-            Copy-Item $src $dst -Force
-          }
-
       - name: Build Plugin
         run: |
+          # Create a temporary csproj that references the downloaded DLLs
+          $csproj = Get-Content "ReClassMCP.Plugin\ReClassMCP.Plugin.csproj" -Raw
+          $csproj = $csproj -replace '<ProjectReference Include="\.\.\\ReClass\.NET\\ReClass\.NET\\ReClass\.NET\.csproj">[\s\S]*?</ProjectReference>', @"
+          <Reference Include="ReClass.NET">
+            <HintPath>$($env:RECLASS_REF_PATH)\ReClass.NET.exe</HintPath>
+            <Private>False</Private>
+          </Reference>
+          "@
+          $csproj | Set-Content "ReClassMCP.Plugin\ReClassMCP.Plugin.csproj"
+
           msbuild ReClassMCP.Plugin\ReClassMCP.Plugin.csproj `
-            /p:Configuration=${{ matrix.configuration }} `
+            /p:Configuration=Release `
             /p:Platform=${{ matrix.platform }} `
             /t:Build `
             /v:minimal
 
       - name: Prepare artifacts
         run: |
-          $outDir = "artifacts\${{ matrix.platform }}"
+          $outDir = "artifacts"
           New-Item -ItemType Directory -Path $outDir -Force
-          Copy-Item "ReClassMCP.Plugin\bin\${{ matrix.platform }}\${{ matrix.configuration }}\ReClassMCP.Plugin.dll" $outDir
+          Copy-Item "ReClassMCP.Plugin\bin\${{ matrix.platform }}\Release\ReClassMCP.Plugin.dll" $outDir
+
+          # Copy Newtonsoft.Json
           $jsonDll = Get-ChildItem -Path packages -Recurse -Filter "Newtonsoft.Json.dll" | Where-Object { $_.FullName -like "*net45*" } | Select-Object -First 1
           if ($jsonDll) {
             Copy-Item $jsonDll.FullName $outDir
           }
 
-      - name: Upload artifact
+      - name: Upload plugin artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ReClassMCP-${{ matrix.platform }}
-          path: artifacts/${{ matrix.platform }}/
+          name: ReClassMCP-Plugin-${{ matrix.platform }}
+          path: artifacts/
 
-  release:
+  package:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
 
     steps:
-      - name: Download x64 artifact
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download x64 plugin
         uses: actions/download-artifact@v4
         with:
-          name: ReClassMCP-x64
-          path: release/x64
+          name: ReClassMCP-Plugin-x64
+          path: release/Plugin-x64
 
-      - name: Download x86 artifact
+      - name: Download x86 plugin
         uses: actions/download-artifact@v4
         with:
-          name: ReClassMCP-x86
-          path: release/x86
+          name: ReClassMCP-Plugin-x86
+          path: release/Plugin-x86
 
-      - name: Create release zip
+      - name: Copy Python server
+        run: cp -r ReClassMCP.Server release/
+
+      - name: Create release zips
         run: |
           cd release
-          zip -r ../ReClassMCP-x64.zip x64/
-          zip -r ../ReClassMCP-x86.zip x86/
+          zip -r ../ReClassMCP-x64.zip Plugin-x64/ ReClassMCP.Server/
+          zip -r ../ReClassMCP-x86.zip Plugin-x86/ ReClassMCP.Server/
+
+      - name: Upload combined artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReClassMCP-Release
+          path: |
+            ReClassMCP-x64.zip
+            ReClassMCP-x86.zip
 
       - name: Get short SHA
         id: sha
         run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
 
       - name: Create Release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: build-${{ steps.sha.outputs.short }}
