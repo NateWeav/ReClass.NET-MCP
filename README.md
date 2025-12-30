@@ -28,9 +28,11 @@ Download the latest `ReClassMCP.Plugin.dll` from the [Releases](../../releases) 
 
 **Option 2: Build from Source**
 
-1. Clone this repo with ReClass.NET as a submodule:
+1. Clone this repo and ReClass.NET:
    ```bash
-   git clone --recursive https://github.com/YOUR_USERNAME/ReClassMCP.git
+   git clone https://github.com/YOUR_USERNAME/ReClassMCP.git
+   cd ReClassMCP
+   git clone https://github.com/ReClassNET/ReClass.NET.git
    ```
 2. Open the solution in Visual Studio 2019+ or run `build.ps1`
 3. Copy `ReClassMCP.Plugin.dll` from the build output to ReClass.NET's `Plugins` folder

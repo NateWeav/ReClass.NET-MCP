@@ -17,8 +17,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Clone ReClass.NET
+        run: git clone --depth 1 https://github.com/ReClassNET/ReClass.NET.git ReClass.NET
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
