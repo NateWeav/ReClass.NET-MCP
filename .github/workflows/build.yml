@@ -1,0 +1,120 @@
+name: Build Plugin
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        platform: [x64, x86]
+        configuration: [Release]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v2
+
+      - name: Restore NuGet packages
+        run: nuget restore ReClassMCP.Plugin\packages.config -PackagesDirectory packages
+
+      - name: Build NativeCore
+        run: |
+          msbuild ReClass.NET\NativeCore\Windows\NativeCore.vcxproj `
+            /p:Configuration=${{ matrix.configuration }} `
+            /p:Platform=${{ matrix.platform }} `
+            /p:PlatformToolset=v143 `
+            /t:Build `
+            /v:minimal
+
+      - name: Build ReClass.NET
+        run: |
+          msbuild ReClass.NET\ReClass.NET\ReClass.NET.csproj `
+            /p:Configuration=${{ matrix.configuration }} `
+            /p:Platform=${{ matrix.platform }} `
+            /t:Build `
+            /v:minimal `
+            /restore
+
+      - name: Copy NativeCore to output
+        run: |
+          $src = "ReClass.NET\NativeCore\Windows\bin\${{ matrix.configuration }}\${{ matrix.platform }}\NativeCore.dll"
+          $dst = "ReClass.NET\ReClass.NET\bin\${{ matrix.configuration }}\${{ matrix.platform }}\"
+          if (Test-Path $src) {
+            Copy-Item $src $dst -Force
+          }
+
+      - name: Build Plugin
+        run: |
+          msbuild ReClassMCP.Plugin\ReClassMCP.Plugin.csproj `
+            /p:Configuration=${{ matrix.configuration }} `
+            /p:Platform=${{ matrix.platform }} `
+            /t:Build `
+            /v:minimal
+
+      - name: Prepare artifacts
+        run: |
+          $outDir = "artifacts\${{ matrix.platform }}"
+          New-Item -ItemType Directory -Path $outDir -Force
+          Copy-Item "ReClassMCP.Plugin\bin\${{ matrix.platform }}\${{ matrix.configuration }}\ReClassMCP.Plugin.dll" $outDir
+          $jsonDll = Get-ChildItem -Path packages -Recurse -Filter "Newtonsoft.Json.dll" | Where-Object { $_.FullName -like "*net45*" } | Select-Object -First 1
+          if ($jsonDll) {
+            Copy-Item $jsonDll.FullName $outDir
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReClassMCP-${{ matrix.platform }}
+          path: artifacts/${{ matrix.platform }}/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+
+    steps:
+      - name: Download x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ReClassMCP-x64
+          path: release/x64
+
+      - name: Download x86 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ReClassMCP-x86
+          path: release/x86
+
+      - name: Create release zip
+        run: |
+          cd release
+          zip -r ../ReClassMCP-x64.zip x64/
+          zip -r ../ReClassMCP-x86.zip x86/
+
+      - name: Get short SHA
+        id: sha
+        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: build-${{ steps.sha.outputs.short }}
+          name: Build ${{ steps.sha.outputs.short }}
+          files: |
+            ReClassMCP-x64.zip
+            ReClassMCP-x86.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
