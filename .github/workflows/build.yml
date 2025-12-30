@@ -43,7 +43,7 @@ jobs:
         run: |
           $outDir = "artifacts"
           New-Item -ItemType Directory -Path $outDir -Force
-          Copy-Item "ReClassMCP.Plugin\bin\${{ matrix.platform }}\Release\ReClassMCP.Plugin.dll" $outDir
+          Copy-Item "ReClassMCP.Plugin\bin\${{ matrix.platform }}\Release\ReClassMCP.dll" $outDir
 
           # Copy Newtonsoft.Json
           $jsonDll = Get-ChildItem -Path packages -Recurse -Filter "Newtonsoft.Json.dll" | Where-Object { $_.FullName -like "*net45*" } | Select-Object -First 1
