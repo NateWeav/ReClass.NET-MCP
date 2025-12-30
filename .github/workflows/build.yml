@@ -53,23 +53,18 @@ jobs:
       - name: Restore NuGet packages
         run: nuget restore ReClassMCP.Plugin\packages.config -PackagesDirectory packages
 
+      - name: Patch csproj
+        run: |
+          $refPath = $env:RECLASS_REF_PATH -replace '\\', '\\'
+          $replacement = "<Reference Include=`"ReClass.NET`"><HintPath>$refPath\\ReClass.NET.exe</HintPath><Private>False</Private></Reference>"
+          $content = Get-Content "ReClassMCP.Plugin\ReClassMCP.Plugin.csproj" -Raw
+          $content = $content -replace '(?s)<ProjectReference Include="[^"]*ReClass\.NET\.csproj"[^>]*>.*?</ProjectReference>', $replacement
+          Set-Content "ReClassMCP.Plugin\ReClassMCP.Plugin.csproj" -Value $content
+          Write-Host "Patched csproj to reference: $env:RECLASS_REF_PATH\ReClass.NET.exe"
+
       - name: Build Plugin
         run: |
-          # Create a temporary csproj that references the downloaded DLLs
-          $csproj = Get-Content "ReClassMCP.Plugin\ReClassMCP.Plugin.csproj" -Raw
-          $csproj = $csproj -replace '<ProjectReference Include="\.\.\\ReClass\.NET\\ReClass\.NET\\ReClass\.NET\.csproj">[\s\S]*?</ProjectReference>', @"
-          <Reference Include="ReClass.NET">
-            <HintPath>$($env:RECLASS_REF_PATH)\ReClass.NET.exe</HintPath>
-            <Private>False</Private>
-          </Reference>
-          "@
-          $csproj | Set-Content "ReClassMCP.Plugin\ReClassMCP.Plugin.csproj"
-
-          msbuild ReClassMCP.Plugin\ReClassMCP.Plugin.csproj `
-            /p:Configuration=Release `
-            /p:Platform=${{ matrix.platform }} `
-            /t:Build `
-            /v:minimal
+          msbuild ReClassMCP.Plugin\ReClassMCP.Plugin.csproj /p:Configuration=Release /p:Platform=${{ matrix.platform }} /t:Build /v:minimal
 
       - name: Prepare artifacts
         run: |
