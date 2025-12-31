@@ -24,18 +24,20 @@ An MCP server that:
 
 **Option 1: Download Pre-built Release (Recommended)**
 
-Download the latest `ReClassMCP.Plugin.dll` from the [Releases](../../releases) page and copy it to your ReClass.NET `Plugins` folder.
+1. Download `ReClassMCP.zip` from the [Releases](../../releases) page
+2. Extract and copy the contents of the `x64/` or `x86/` folder (match your ReClass.NET version) to your ReClass.NET `Plugins` folder
+3. The `MCP-Server/` folder contains the Python MCP server
 
 **Option 2: Build from Source**
 
 1. Clone this repo and ReClass.NET:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/ReClassMCP.git
+   git clone https://github.com/NateWeav/ReClassMCP.git
    cd ReClassMCP
    git clone https://github.com/ReClassNET/ReClass.NET.git
    ```
 2. Open the solution in Visual Studio 2019+ or run `build.ps1`
-3. Copy `ReClassMCP.Plugin.dll` from the build output to ReClass.NET's `Plugins` folder
+3. Copy `ReClassMCP.dll` and `Newtonsoft.Json.dll` from the build output to ReClass.NET's `Plugins` folder
 
 ### Installing the MCP Server
 

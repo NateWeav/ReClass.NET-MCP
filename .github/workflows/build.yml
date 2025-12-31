@@ -3,6 +3,8 @@ name: Build Plugin
 on:
   push:
     branches: [main, master]
+    tags:
+      - 'v*'
   pull_request:
     branches: [main, master]
 
@@ -15,8 +17,19 @@ jobs:
     strategy:
       matrix:
         platform: [x64, x86]
+    outputs:
+      is_act: ${{ steps.check_act.outputs.is_act }}
 
     steps:
+      - name: Check if running in act
+        id: check_act
+        run: |
+          if ($env:ACT) {
+            echo "is_act=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "is_act=false" >> $env:GITHUB_OUTPUT
+          }
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -46,6 +59,8 @@ jobs:
         run: |
           $outDir = "artifacts"
           New-Item -ItemType Directory -Path $outDir -Force
+
+          # Copy plugin DLL (keep original name)
           Copy-Item "ReClassMCP.Plugin\bin\${{ matrix.platform }}\Release\ReClassMCP.dll" $outDir
 
           # Copy Newtonsoft.Json
@@ -54,62 +69,78 @@ jobs:
             Copy-Item $jsonDll.FullName $outDir
           }
 
+      # Local output for act
+      - name: Copy to dist folder (local)
+        if: ${{ env.ACT }}
+        run: |
+          $distDir = "${{ github.workspace }}\dist\${{ matrix.platform }}"
+          New-Item -ItemType Directory -Path $distDir -Force
+          Copy-Item "artifacts\*" $distDir -Force
+
+          $serverDir = "${{ github.workspace }}\dist\MCP-Server"
+          New-Item -ItemType Directory -Path $serverDir -Force
+          Copy-Item "ReClassMCP.Server\*" $serverDir -Force
+
+          Write-Host "Build output copied to: ${{ github.workspace }}\dist"
+
       - name: Upload plugin artifact
+        if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
-          name: ReClassMCP-Plugin-${{ matrix.platform }}
+          name: ReClassMCP-${{ matrix.platform }}
           path: artifacts/
 
-  package:
+  release:
     needs: build
     runs-on: ubuntu-latest
+    if: ${{ needs.build.outputs.is_act != 'true' && github.event_name == 'push' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download x64 plugin
+      - name: Download x64 artifact
         uses: actions/download-artifact@v4
         with:
-          name: ReClassMCP-Plugin-x64
-          path: release/Plugin-x64
+          name: ReClassMCP-x64
+          path: release/x64/
 
-      - name: Download x86 plugin
+      - name: Download x86 artifact
         uses: actions/download-artifact@v4
         with:
-          name: ReClassMCP-Plugin-x86
-          path: release/Plugin-x86
+          name: ReClassMCP-x86
+          path: release/x86/
 
-      - name: Copy Python server
-        run: cp -r ReClassMCP.Server release/
+      - name: Copy MCP Server
+        run: |
+          mkdir -p release/MCP-Server
+          cp ReClassMCP.Server/reclass_mcp_server.py release/MCP-Server/
+          cp ReClassMCP.Server/requirements.txt release/MCP-Server/
+          cp ReClassMCP.Server/pyproject.toml release/MCP-Server/
 
-      - name: Create release zips
+      - name: Create release zip
         run: |
           cd release
-          zip -r ../ReClassMCP-x64.zip Plugin-x64/ ReClassMCP.Server/
-          zip -r ../ReClassMCP-x86.zip Plugin-x86/ ReClassMCP.Server/
+          zip -r ../ReClassMCP.zip x64/ x86/ MCP-Server/
 
-      - name: Upload combined artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ReClassMCP-Release
-          path: |
-            ReClassMCP-x64.zip
-            ReClassMCP-x86.zip
-
-      - name: Get short SHA
-        id: sha
-        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "version=build-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+            echo "is_release=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create Release
-        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: build-${{ steps.sha.outputs.short }}
-          name: Build ${{ steps.sha.outputs.short }}
-          files: |
-            ReClassMCP-x64.zip
-            ReClassMCP-x86.zip
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.is_release == 'true' && format('ReClassMCP {0}', steps.version.outputs.version) || steps.version.outputs.version }}
+          files: ReClassMCP.zip
+          prerelease: ${{ steps.version.outputs.is_release != 'true' }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

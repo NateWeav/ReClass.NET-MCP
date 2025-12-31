@@ -59,3 +59,7 @@ nul
 *.log
 *.tmp
 *.temp
+
+# Local build output
+dist/
+/.claude
